@@ -1,0 +1,88 @@
+name: Code Quality Check
+
+on:
+  push:
+    branches: [ main, development ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  phpstan:
+    runs-on: ubuntu-latest
+    name: PHPStan Static Analysis
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.4'
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv
+        coverage: none
+
+    - name: Cache Composer dependencies
+      uses: actions/cache@v3
+      with:
+        path: /tmp/composer-cache
+        key: ${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
+
+    - name: Install Composer Dependencies
+      run: composer install --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist --optimize-autoloader
+
+    - name: Create required directories
+      run: |
+        mkdir -p bootstrap/cache
+        mkdir -p storage/logs
+        mkdir -p storage/framework/sessions
+        mkdir -p storage/framework/views
+        mkdir -p storage/framework/cache
+        chmod -R 755 bootstrap/cache storage
+
+    - name: Copy .env for PHPStan
+      run: cp .env.example .env
+
+    - name: Generate application key
+      run: php artisan key:generate
+
+    - name: Get changed PHP files
+      id: changed-files
+      uses: tj-actions/changed-files@v44
+      with:
+        files: |
+          app/**/*.php
+          config/**/*.php
+          database/**/*.php
+          routes/**/*.php
+          tests/**/*.php
+        files_ignore: |
+          vendor/**
+          storage/**
+          bootstrap/cache/**
+
+    - name: List changed files (debug)
+      if: steps.changed-files.outputs.any_changed == 'true'
+      run: |
+        echo "Changed PHP files count: ${{ steps.changed-files.outputs.all_changed_files_count }}"
+        echo "Files: ${{ steps.changed-files.outputs.all_changed_files }}"
+
+    - name: Run PHPStan on changed files only
+      if: steps.changed-files.outputs.any_changed == 'true' && steps.changed-files.outputs.all_changed_files_count < 20
+      run: |
+        echo "Running PHPStan on ${{ steps.changed-files.outputs.all_changed_files_count }} changed PHP files..."
+        ./vendor/bin/phpstan analyse ${{ steps.changed-files.outputs.all_changed_files }} --memory-limit=1G --no-progress
+
+    - name: Skip - too many files changed
+      if: steps.changed-files.outputs.any_changed == 'true' && steps.changed-files.outputs.all_changed_files_count >= 20
+      run: |
+        echo "⚠️  Too many files changed (${{ steps.changed-files.outputs.all_changed_files_count }}). Skipping PHPStan to avoid long CI times."
+        echo "This usually happens on initial commits or large refactors."
+        echo "Run 'sail composer phpstan' locally to check your code."
+
+    - name: No PHP files changed
+      if: steps.changed-files.outputs.any_changed == 'false'
+      run: |
+        echo "✅ No PHP files were changed in this commit. Skipping PHPStan." 
