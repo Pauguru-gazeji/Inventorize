@@ -33,6 +33,15 @@ jobs:
     - name: Install Composer Dependencies
       run: composer install --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist --optimize-autoloader
 
+    - name: Create required directories
+      run: |
+        mkdir -p bootstrap/cache
+        mkdir -p storage/logs
+        mkdir -p storage/framework/sessions
+        mkdir -p storage/framework/views
+        mkdir -p storage/framework/cache
+        chmod -R 755 bootstrap/cache storage
+
     - name: Copy .env for PHPStan
       run: cp .env.example .env
 
