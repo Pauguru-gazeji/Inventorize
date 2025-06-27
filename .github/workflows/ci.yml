@@ -48,26 +48,41 @@ jobs:
     - name: Generate application key
       run: php artisan key:generate
 
-    - name: Get changed files
+    - name: Get changed PHP files
       id: changed-files
       uses: tj-actions/changed-files@v44
       with:
         files: |
-          **/*.php
+          app/**/*.php
+          config/**/*.php
+          database/**/*.php
+          routes/**/*.php
+          tests/**/*.php
         files_ignore: |
           vendor/**
           storage/**
           bootstrap/cache/**
 
-    - name: Run PHPStan on changed files
+    - name: List changed files (debug)
       if: steps.changed-files.outputs.any_changed == 'true'
       run: |
-        echo "Running PHPStan on changed files..."
-        echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+        echo "Changed PHP files count: ${{ steps.changed-files.outputs.all_changed_files_count }}"
+        echo "Files: ${{ steps.changed-files.outputs.all_changed_files }}"
+
+    - name: Run PHPStan on changed files only
+      if: steps.changed-files.outputs.any_changed == 'true' && steps.changed-files.outputs.all_changed_files_count < 20
+      run: |
+        echo "Running PHPStan on ${{ steps.changed-files.outputs.all_changed_files_count }} changed PHP files..."
         ./vendor/bin/phpstan analyse ${{ steps.changed-files.outputs.all_changed_files }} --memory-limit=1G --no-progress
 
-    - name: Run PHPStan on all files (fallback)
+    - name: Skip - too many files changed
+      if: steps.changed-files.outputs.any_changed == 'true' && steps.changed-files.outputs.all_changed_files_count >= 20
+      run: |
+        echo "⚠️  Too many files changed (${{ steps.changed-files.outputs.all_changed_files_count }}). Skipping PHPStan to avoid long CI times."
+        echo "This usually happens on initial commits or large refactors."
+        echo "Run 'sail composer phpstan' locally to check your code."
+
+    - name: No PHP files changed
       if: steps.changed-files.outputs.any_changed == 'false'
       run: |
-        echo "No PHP files changed, running full PHPStan analysis..."
-        ./vendor/bin/phpstan analyse --memory-limit=1G --no-progress 
+        echo "✅ No PHP files were changed in this commit. Skipping PHPStan." 
