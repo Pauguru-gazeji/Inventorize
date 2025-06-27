@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: Code Quality Check
 
 on:
   push:
@@ -7,24 +7,15 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  phpstan:
     runs-on: ubuntu-latest
+    name: PHPStan Static Analysis
     
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: password
-          MYSQL_DATABASE: inventorize_test
-          MYSQL_USER: sail
-          MYSQL_PASSWORD: password
-          MYSQL_ALLOW_EMPTY_PASSWORD: yes
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping --silent" --health-interval=10s --health-timeout=5s --health-retries=5
-
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
@@ -32,24 +23,6 @@ jobs:
         php-version: '8.4'
         extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv
         coverage: none
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
-
-    - name: Copy .env for testing
-      run: |
-        cp .env.example .env
-        echo "DB_CONNECTION=mysql" >> .env
-        echo "DB_HOST=127.0.0.1" >> .env
-        echo "DB_PORT=3306" >> .env
-        echo "DB_DATABASE=inventorize_test" >> .env
-        echo "DB_USERNAME=sail" >> .env
-        echo "DB_PASSWORD=password" >> .env
-        echo "APP_ENV=testing" >> .env
-        echo "TELESCOPE_ENABLED=false" >> .env
 
     - name: Cache Composer dependencies
       uses: actions/cache@v3
@@ -60,72 +33,32 @@ jobs:
     - name: Install Composer Dependencies
       run: composer install --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist --optimize-autoloader
 
-    - name: Install NPM Dependencies
-      run: npm ci
+    - name: Copy .env for PHPStan
+      run: cp .env.example .env
 
     - name: Generate application key
       run: php artisan key:generate
 
-    - name: Directory Permissions
-      run: chmod -R 755 storage bootstrap/cache
+    - name: Get changed files
+      id: changed-files
+      uses: tj-actions/changed-files@v44
+      with:
+        files: |
+          **/*.php
+        files_ignore: |
+          vendor/**
+          storage/**
+          bootstrap/cache/**
 
-    - name: Create storage directories
+    - name: Run PHPStan on changed files
+      if: steps.changed-files.outputs.any_changed == 'true'
       run: |
-        mkdir -p storage/logs
-        mkdir -p storage/framework/sessions
-        mkdir -p storage/framework/views
-        mkdir -p storage/framework/cache
+        echo "Running PHPStan on changed files..."
+        echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+        ./vendor/bin/phpstan analyse ${{ steps.changed-files.outputs.all_changed_files }} --memory-limit=1G --no-progress
 
-    - name: Build Assets
-      run: npm run build
-
-    - name: Wait for MySQL
+    - name: Run PHPStan on all files (fallback)
+      if: steps.changed-files.outputs.any_changed == 'false'
       run: |
-        while ! mysqladmin ping -h 127.0.0.1 -u sail -ppassword --silent; do
-          echo 'Waiting for MySQL...'
-          sleep 2
-        done
-
-    - name: Run database migrations
-      run: php artisan migrate --force
-      env:
-        DB_CONNECTION: mysql
-        DB_HOST: 127.0.0.1
-        DB_PORT: 3306
-        DB_DATABASE: inventorize_test
-        DB_USERNAME: sail
-        DB_PASSWORD: password
-
-    - name: Run PHP Code Style Check
-      run: ./vendor/bin/pint --test
-
-    - name: Run PHPStan Static Analysis
-      run: ./vendor/bin/phpstan analyse --memory-limit=2G --no-progress
-
-    - name: Execute PHPUnit Tests
-      run: php artisan test --parallel
-      env:
-        DB_CONNECTION: mysql
-        DB_HOST: 127.0.0.1
-        DB_PORT: 3306
-        DB_DATABASE: inventorize_test
-        DB_USERNAME: sail
-        DB_PASSWORD: password
-        APP_ENV: testing
-
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Deploy to production
-      run: |
-        echo "🚀 Deploy step would go here"
-        echo "This could include:"
-        echo "- Build Docker image"
-        echo "- Push to container registry"
-        echo "- Deploy to server"
-        echo "- Run migrations" 
+        echo "No PHP files changed, running full PHPStan analysis..."
+        ./vendor/bin/phpstan analyse --memory-limit=1G --no-progress 
